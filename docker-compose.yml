@@ -1,0 +1,657 @@
+version: "3.8"
+
+networks:
+  interna:
+    name: interna
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.17.0/24
+          gateway: 192.168.17.1   
+        # - subnet: 2001:db8:17::/64
+        #   gateway: 2001:db8:17::1
+  externa:
+    name: externa
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.27.0/24
+          gateway: 192.168.27.1      
+        # - subnet: 2001:db8:27::/64
+        #   gateway: 2001:db8:27::1
+
+services:
+  socket-proxy:
+    container_name: socket-proxy
+    image: tecnativa/docker-socket-proxy
+    restart: always
+    ports:
+    - "2375:2375"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+    environment:
+      - LOG_LEVEL=info # debug,info,notice,warning,err,crit,alert,emerg
+      ## Variables match the URL prefix (i.e. AUTH blocks access to /auth/* parts of the API, etc.).
+      # 0 to revoke access.
+      # 1 to grant access.
+      ## Granted by Default
+      - EVENTS=1
+      - PING=1
+      - VERSION=1
+      # ## Revoked by Default
+      # # Security critical
+      # - AUTH=0
+      # - SECRETS=0
+      # - POST=1 # Watchtower
+      # # Not always needed
+      # - BUILD=0
+      # - COMMIT=0
+      # - CONFIGS=0
+      - CONTAINERS=1 # Traefik, portainer, etc.
+      # - DISTRIBUTION=0
+      # - EXEC=0
+      # - IMAGES=1 # Portainer
+      # - INFO=1 # Portainer
+      # - NETWORKS=1 # Portainer
+      # - NODES=0
+      # - PLUGINS=0
+      # - SERVICES=1 # Portainer
+      # - SESSION=0
+      # - SWARM=0
+      # - SYSTEM=0
+      # - TASKS=1 # Portainer
+      # - VOLUMES=1 # Portainer
+    networks:
+      interna:
+
+  npm:
+    image: 'jc21/nginx-proxy-manager:2.9.19'
+    container_name: npm
+    restart: always
+    ports:
+      - '80:80'
+      - '443:443'
+      - '81:81'
+    environment:
+      DISABLE_IPV6: 'true'
+      DB_MYSQL_HOST: rds-igor-free.c8wdfjqsqpvd.sa-east-1.rds.amazonaws.com # aws-mariadb.c8apl0tnblbk.sa-east-1.rds.amazonaws.com
+      DB_MYSQL_PORT: '3306'
+      DB_MYSQL_USER: npm
+      DB_MYSQL_PASSWORD: vZxfQLZ)P5(Vd*bZ
+      DB_MYSQL_NAME: npm
+    volumes:
+      - ./npm/data:/data
+      - ./npm/letsencrypt:/etc/letsencrypt
+      - ./npm/logs:/var/log/letsencrypt
+      - ./npm/authelia-configs:/authelia-configs:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "https://status.igorferreira.xyz/api/push/JmSN0VjF15?status=up&msg=OK&ping="]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+    networks:
+      externa:
+        ipv4_address: 192.168.27.254
+      interna:
+
+  authelia:
+    container_name: authelia
+    image: authelia/authelia:4
+    restart: unless-stopped
+    user: "1001:1001"
+    ports:
+      - 9091:9091
+    volumes:
+      - ./authelia:/config
+    environment:
+      - TZ=America/Sao_Paulo
+    networks:
+      externa:
+      interna:
+
+  caddy:
+    image: igorferreir4/caddy:2.6.2
+    # build: ./caddy
+    # image: caddy-cloudflare-igor
+    container_name: caddy
+    restart: always
+    # ports:
+    #   - "80:80"
+    #   - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+      - ./caddy/certificados:/etc/caddy/certificados
+      - ./www:/srv
+      - ./caddy/cf-ips.txt:/etc/caddy/cf-ips.txt
+    networks:
+      externa:
+        ipv4_address: 192.168.27.253
+      interna:
+
+  php-fpm:
+    image: igorferreir4/php-fpm:latest
+    # build: ./php-fpm
+    # image: php-fpm-igor
+    container_name: php-fpm
+    restart: always
+    user: "1001:1001"
+    volumes:
+      - ./www:/srv
+      - ./php-fpm/php.ini:/usr/local/etc/php/php.ini
+    networks:
+      externa:
+        ipv4_address: 192.168.27.252
+      interna:
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    restart: always
+    environment:
+      - TZ=America/Sao_Paulo
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_INCLUDE_RESTARTING=true
+      - WATCHTOWER_INCLUDE_STOPPED=true
+      - WATCHTOWER_POLL_INTERVAL=84600
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      interna:
+
+  portainer:
+    image: portainer/portainer-ee:latest
+    container_name: portainer
+    restart: always
+    ports:
+      # - "8000:8000"
+      - "27001:9000"
+      # - "27002:9443"
+    volumes:
+      - ./portainer:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      interna:
+
+  filebrowser:
+    image: filebrowser/filebrowser:v2
+    container_name: filebrowser
+    restart: always
+    # ports:
+    #   - "27004:80"
+    environment:
+      PUID: 1001
+      PGID: 1001
+    healthcheck:
+      test: ["CMD", "curl", "-f", "https://status.igorferreira.xyz/api/push/NKjcKUci44?status=up&msg=OK&ping="]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./www:/srv
+      - /home/ubuntu/150GB:/srv/restrito/LOCAL
+      - ./filebrowser/database.db:/database.db
+      - ./filebrowser/.filebrowser.json:/.filebrowser.json
+    networks:
+      interna:
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - TZ=America/Sao_Paulo
+      - WEBUI_PORT=8080
+    volumes:
+      - ./qbittorrent:/config
+      - ./www/restrito/qbt:/downloads
+    # ports:
+    #   - 8003:8080
+    #   - 6881:6881
+    #   - 6881:6881/udp
+    deploy:
+      resources:
+        limits:
+          memory: 2048M
+    restart: always
+    networks:
+      interna:
+
+  rclone-googledrive:
+    container_name: rclone-googledrive
+    image: rclone/rclone:1.61.1 #1.59.2 #:1.52.3 #1.50.2 # latest v1.53 and above getting 403 DownloadQuotaExceeded error.
+    restart: always
+    cap_add:
+      - SYS_ADMIN
+    ports:
+      - 5572:5572
+    security_opt:
+      - apparmor:unconfined
+    user: 1001:1001
+    command:
+      "mount GDRIVE: /data/GDRIVE \
+      --use-mmap \
+      --allow-other \
+      --no-modtime \
+      --allow-non-empty \
+      --dir-cache-time=1000h \
+      --poll-interval=15s \
+      --buffer-size=256M \
+      --umask=002 \
+      --uid=1001 \
+      --gid=1001 \
+      --drive-chunk-size=256M \
+      --user-agent=SDJF \
+      --cache-dir=/data/cache/GDRIVE \
+      --vfs-cache-mode=full \
+      --vfs-cache-max-age=2h \
+      --vfs-cache-max-size=5G \
+      --vfs-read-chunk-size=32M \
+      --vfs-read-chunk-size-limit=2G \
+      --log-file /logs/GDRIVE.log \
+      --rc \
+      --rc-web-gui \
+      --rc-addr :5572 \
+      --rc-no-auth \
+      --log-level=INFO"
+      # --rc-user=igor \
+      # --rc-pass=99381010a \
+      #--bwlimit 150M \
+      #--bwlimit-file 40M \
+    devices:
+      - /dev/fuse
+    volumes:
+      - /home/ubuntu/.config/rclone:/config/rclone
+      - ./rclone+mergerfs/rclone-mounts/GDRIVE:/data/GDRIVE:shared
+      - ./rclone+mergerfs/rclone-cache/GDRIVE:/data/cache/GDRIVE
+      - ./rclone+mergerfs/logs:/logs
+      - /etc/passwd:/etc/passwd:ro
+      - /etc/group:/etc/group:ro
+      - /etc/fuse.conf:/etc/fuse.conf:ro
+    environment:
+      - TZ=America/Sao_Paulo
+    networks:
+      interna:
+
+  redis:
+    image: redis/redis-stack:latest
+    container_name: redis
+    restart: always
+    ports:
+      - 6379:6379
+      - 8001:8001
+    environment:
+      - 'REDIS_ARGS=--requirepass Igor2022RedisPW'
+    volumes:
+      - ./redis:/data
+    networks:
+      interna:
+
+  nextcloud:
+    image: lscr.io/linuxserver/nextcloud:latest
+    container_name: nextcloud
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - TZ=America/Sao_Paulo
+    volumes:
+      - ./nextcloud/config:/config
+      - ./nextcloud/data:/data
+      - ./rclone+mergerfs/rclone-mounts:/data/google-drive
+    # ports:
+    #   - 443:443
+    restart: unless-stopped
+    depends_on:
+      - rclone-googledrive
+    healthcheck:
+      test: ["CMD", "curl", "-f", "https://status.igorferreira.xyz/api/push/FxVJ3mR5K1?status=up&msg=OK&ping="]
+      interval: 300s
+      timeout: 10s
+      retries: 3
+    networks:
+      interna:
+    # Usar depois de instalado: sudo -u abc php occ config:app:set files max_chunk_size --value 104857600
+
+  code:
+    image: collabora/code:latest
+    container_name: collaboracode
+    environment:
+      - extra_params=--o:ssl.enable=true
+      # - DOMAIN=code.pc.igorferreira.xyz
+      # - USERNAME=igor
+      # - PASSWORD=1d954sac1sa64*/35&#
+    # ports:
+    #   - 9980:9980
+    restart: always
+    networks:
+      interna:
+
+  # teste:
+  #   image: igorferreir4/filebrowsertus:latest
+  #   container_name: teste
+  #   restart: always
+  #   # ports:
+  #   #   - "27004:80"
+  #   environment:
+  #     PUID: 1001
+  #     PGID: 1001
+  #   volumes:
+  #     - ./testeups:/srv
+  #     - ./testeups/database.db:/database.db
+  #     - ./testeups/.filebrowser.json:/.filebrowser.json
+  #   networks:
+  #     interna:
+
+  jdownloader-2:
+    image: jlesage/jdownloader-2
+    container_name: jdownloader-2
+    ports:
+      - "5800:5800"
+    volumes:
+      - "./jd2:/config:rw"
+      - "./www/restrito/jd2:/output:rw"
+    restart: unless-stopped
+    networks:
+      externa:
+
+  lldap:
+    image: nitnelave/lldap:latest
+    container_name: lldap
+    ports:
+      # For LDAP
+      - "3890:3890"
+      # For the web front-end
+      - "17170:17170"
+    volumes:
+      - ./lldap/data:/data
+    restart: unless-stopped
+    environment:
+      - UID=1001
+      - GID=1001
+      - TZ=America/Sao_Paulo
+      - 'LLDAP_HTTP_URL=https://ldap.igorferreira.xyz'
+      - LLDAP_JWT_SECRET=v89s7v9sd1vb3xc21v9df6s7v98df4v56cx
+      - LLDAP_LDAP_USER_PASS=F87DSA89F7f2ds54fd9s7f8sd4f
+      - 'LLDAP_LDAP_BASE_DN=dc=igorferreira,dc=xyz'
+      - LLDAP_SMTP_OPTIONS__ENABLE_PASSWORD_RESET=true
+      - LLDAP_SMTP_OPTIONS__SERVER=smtp.postmarkapp.com
+      - LLDAP_SMTP_OPTIONS__PORT=587
+      - LLDAP_SMTP_OPTIONS__SMTP_ENCRYPTION=STARTTLS
+      - 'LLDAP_SMTP_OPTIONS__USER=ca732029-b5c9-4d67-8f95-363f29423fc5'
+      - 'LLDAP_SMTP_OPTIONS__PASSWORD=ca732029-b5c9-4d67-8f95-363f29423fc5'
+      - 'LLDAP_SMTP_OPTIONS__FROM=LLDAP Admin <nao-responda@igorferreira.xyz>'
+      - 'LLDAP_SMTP_OPTIONS__REPLY_TO=Não responda <nao-responda@igorferreira.xyz>'
+      # - LLDAP_VERBOSE=true
+    networks:
+      - interna
+      - externa
+
+  organizr:
+    container_name: organizr
+    image: organizr/organizr:latest
+    restart: unless-stopped
+    volumes:
+      - ./organizr:/config
+    environment:
+      - PGID=1001
+      - PUID=1001
+    ports:
+      - '8081:80'
+    networks:
+      - interna
+      - externa
+
+  homepage:
+    image: ghcr.io/benphelps/homepage:latest
+    container_name: homepage
+    restart: unless-stopped
+    ports:
+      - 3000:3000
+    environment:
+      - PUID=1001
+      - PGID=1001
+    volumes:
+      - ./homepage:/app/config # Make sure your local config directory exists
+      # - /var/run/docker.sock:/var/run/docker.sock:ro # (optional) For docker integrations
+    networks:
+      - interna
+      - externa
+
+  # keycloak:
+  #   image: quay.io/keycloak/keycloak:20.0.3
+  #   container_name: keycloak
+  #   restart: always
+  #   ports:
+  #     - 8082:8080
+  #     - 8443:8443
+  #   environment:
+  #     # - KEYCLOAK_ADMIN=igorsf 
+  #     # - KEYCLOAK_ADMIN_PASSWORD=99381010a
+  #     - KC_DB=mariadb
+  #     - KC_DB_URL=jdbc:mariadb://npm:3306/keycloak
+  #     - KC_DB_USERNAME=keycloak
+  #     - 'KC_DB_PASSWORD=5MJKjtNE/zC7)QGC'
+  #     - KC_HEALTH_ENABLED=true
+  #     - KC_METRICS_ENABLED=true
+  #     # - KC_FEATURES=token-exchange
+  #     - 'KC_HOSTNAME=auth.igorferreira.xyz'
+  #     # - KC_HTTP_RELATIVE_PATH=/login
+  #     - KC_PROXY=edge
+  #     # - KC_HTTP_ENABLED=true
+  #     # - KC_HOSTNAME_STRICT=false
+  #   command: start
+  #   networks:
+  #     - interna
+  #     - externa
+
+  # openldap:
+  #   image: zcube/bitnami-compat-openldap:2.6.3
+  #   user: "1001"
+  #   container_name: openldap
+  #   restart: unless-stopped
+  #   ports:
+  #     - '1389:1389'
+  #     - '1636:1636'
+  #   environment:
+  #     - LDAP_ROOT=dc=igorferreira,dc=xyz
+  #     - LDAP_ADMIN_USERNAME=admin
+  #     - 'LDAP_ADMIN_PASSWORD=99381010Ab.'
+  #     - LDAP_USERS=teste1,teste2
+  #     - LDAP_PASSWORDS=f12sd32fsdf1ds,rt87ret9r87et98ret
+  #     - LDAP_USER_DC=padrao
+  #     - LDAP_GROUP=padrao
+  #   volumes:
+  #     - ./openldap:/bitnami/openldap
+  #   networks:
+  #     - interna
+  #     - externa
+
+  # ldapadmin:
+  #   image: wheelybird/ldap-user-manager
+  #   container_name: ldapadmin
+  #   restart: unless-stopped
+  #   ports:
+  #     - 7880:80
+  #     - 7443:443
+  #   environment:
+  #     - 'LDAP_URI=ldap://openldap:1389'
+  #     - 'LDAP_BASE_DN=dc=igorferreira,dc=xyz'
+  #     - LDAP_REQUIRE_STARTTLS=false
+  #     - LDAP_ADMINS_GROUP=administradores
+  #     - 'SITE_NAME=Igor Ferreira LDAP Admin'
+  #     - 'LDAP_ADMIN_BIND_DN=cn=admin,dc=igorferreira,dc=xyz'
+  #     - 'LDAP_ADMIN_BIND_PWD=99381010Ab.'
+  #     - LDAP_IGNORE_CERT_ERRORS=true
+  #     - FORCE_RFC2307BIS=false
+  #     - LDAP_USER_OU=usuarios
+  #     - LDAP_GROUP_OU=grupos
+  #     - DEFAULT_USER_GROUP=geral
+  #     - 'USERNAME_FORMAT={first_name}'
+  #     - PASSWORD_HASH=SHA512CRYPT
+  #     - SMTP_HOSTNAME=smtp.postmarkapp.com
+  #     - SMTP_HOST_PORT=587
+  #     - SMTP_USERNAME=ca732029-b5c9-4d67-8f95-363f29423fc5
+  #     - SMTP_PASSWORD=ca732029-b5c9-4d67-8f95-363f29423fc5
+  #     - SMTP_USE_TLS=TRUE
+  #     - EMAIL_FROM_ADDRESS=nao-responda@igorferreira.xyz
+  #     - ACCEPT_WEAK_PASSWORDS=TRUE
+  #   networks:
+  #     - interna
+  #     - externa
+
+  # guacamole:
+  #   image: abesnier/guacamole:alpine
+  #   container_name: guacamole
+  #   ports:
+  #     - 8080:8080
+  #   environment:
+  #     - GUACD_LOG_LEVEL=debug
+  #   volumes:
+  #     - ./guacamole:/config
+  #   networks:
+  #     - interna
+  #     - externa
+
+  # guacamole:
+  #   image: unsafetypin/guacamole:latest
+  #   container_name: guacamole
+  #   ports:
+  #     - '8080:8080'
+  #   environment:
+  #     - EXTENSIONS=auth-ldap
+  #   volumes:
+  #     - ./guacamole:/config
+  #   networks:
+  #     - interna
+  #     - externa
+
+  # rclone-crypt:
+  #   container_name: rclone-crypt
+  #   image: rclone/rclone:latest
+  #   cap_add:
+  #     - SYS_ADMIN
+  #   security_opt:
+  #     - apparmor:unconfined
+  #   user: 1001:1001
+  #   command:
+  #     "mount GDRIVE:OC /data/crypt \
+  #     --use-mmap \
+  #     --allow-other \
+  #     --no-modtime \
+  #     --allow-non-empty \
+  #     --dir-cache-time=1000h \
+  #     --poll-interval=15s \
+  #     --buffer-size=256M \
+  #     --uid=1001 \
+  #     --gid=1001 \
+  #     --umask=002 \
+  #     --drive-chunk-size=256M \
+  #     --user-agent=Igor \
+  #     --cache-dir=/data/cache/crypt \
+  #     --vfs-cache-mode=full \
+  #     --vfs-cache-max-age=2h \
+  #     --vfs-cache-max-size=5G \
+  #     --vfs-read-chunk-size=32M \
+  #     --vfs-read-chunk-size-limit=2G \
+  #     --log-file /config/rclone/logs/crypt.log \
+  #     --log-level=NOTICE \
+  #     --rc \
+  #     --rc-web-gui \
+  #     --rc-addr :5572 \
+  #     --rc-user=igor \
+  #     --rc-pass=99381010a"
+  #     #--bwlimit 3M \
+  #     # 3M approxmimately equals 253 GB limit per day
+  #     # previously buffer 256 buffer 256 chunk size 128 read and limit off
+  #   devices:
+  #     - /dev/fuse
+  #   volumes:
+  #     - ./rclone:/config/rclone
+  #     - /home/ubuntu/150GB/docker/GDRIVE:/data/crypt:shared
+  #     - /home/ubuntu/150GB/docker/GDRIVE-cache:/data/cache/crypt
+  #     - /etc/passwd:/etc/passwd:ro
+  #     - /etc/group:/etc/group:ro
+  #     - /etc/fuse.conf:/etc/fuse.conf:ro
+  #   environment:
+  #     - TZ=America/Sao_Paulo
+  #   networks:
+  #     interna:
+
+  # mergerfs:
+  #   container_name: mergerfs
+  #   image: hotio/mergerfs:latest
+  #   restart: always
+  #   depends_on:
+  #     - rclone-drive
+  #   user: 1001:1001
+  #   command: "/data/GDRIVE=RO \
+  #     /data/media \
+  #     -o rw,\
+  #     use_ino,\
+  #     allow_other,\
+  #     func.getattr=newest,\
+  #     category.action=all,\
+  #     category.create=ff,\
+  #     statfs_ignore=nc,\
+  #     cache.files=auto-full,\
+  #     func.getattr=newest,\
+  #     dropcacheonclose=true,\
+  #     nonempty"
+  #   cap_add:
+  #     - SYS_ADMIN
+  #   security_opt:
+  #     - apparmor:unconfined
+  #   devices:
+  #     - /dev/fuse
+  #   environment:
+  #     - TZ=America/Sao_Paulo
+  #   volumes:
+  #     - /etc/passwd:/etc/passwd:ro
+  #     - /etc/group:/etc/group:ro
+  #     - /etc/fuse.conf:/etc/fuse.conf:shared
+  #     #- $DATADIR:/data:slave # creates local-media and shb-media on host
+  #     - /home/ubuntu/150GB/docker/GDRIVE:/data/GDRIVE:rshared
+  #     - /home/ubuntu/150GB/docker/FILMES-SERIES:/data/media:rshared
+  #   networks:
+  #     interna:
+
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest #update the verion where necessary
+  #   container_name: cloudflared
+  #   restart: always
+  #   command: tunnel --no-autoupdate run --token eyJhIjoiOWU2ZGQzMDQ1M2I0NDIzYmQ3MjgwNjU5MTAxZmRkMjAiLCJ0IjoiZjdjYjkwOGMtMTY3NC00YTkyLWFiZTktZTUyYzI5NWY4NjQ3IiwicyI6Ik0yRXpZekkwWkRrdE56TmhZaTAwWXprd0xUbGtOVGN0TmpFNE9ESmhOV05tWVdJMSJ9 #Replace UUID with your actual UUID
+  #   networks:
+  #     interna:
+
+  # picoshare:
+  #   image: mtlynch/picoshare
+  #   container_name: picoshare
+  #   environment:
+  #     - PORT=3001
+  #     - PS_SHARED_SECRET=99381010a
+  #   volumes:
+  #     - ./picoshare:/data
+  #   # ports:
+  #   #   - 25501:3001
+  #   restart: always
+  #   networks:
+  #     interna:
+
+  # jellyfin:
+  #   image: jellyfin/jellyfin:latest
+  #   container_name: jellyfin
+  #   user: 1001:1001
+  #   # network_mode: "host"
+  #   # ports:
+  #   #   - 8096:8096
+  #   volumes:
+  #     - ./jellyfin/config:/config
+  #     - ./jellyfin/cache:/cache
+  #     - ./www/restrito/jellyfin:/media
+  #     # - /home/ubuntu/150GB/docker/FILMES-SERIES:/media/GDRIVE:ro
+  #   restart: "always"
+  #   # Optional - alternative address used for autodiscovery
+  #   environment:
+  #     - JELLYFIN_PublishedServerUrl=https://jf.igorferreira.xyz
+  #   networks:
+  #     interna:
